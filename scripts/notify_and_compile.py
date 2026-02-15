@@ -1,27 +1,24 @@
 """
-Compile the book and send a daily text with today's entry via Twilio.
+Compile the book and send a ntfy.sh push notification that the entry is ready.
+The notification triggers an iPhone Shortcut to pull the entry and send via iMessage.
 
 Usage:
     python scripts/notify_and_compile.py
 
-Environment variables required:
-    TWILIO_ACCOUNT_SID    - Your Twilio account SID
-    TWILIO_AUTH_TOKEN      - Your Twilio auth token
-    TWILIO_FROM_NUMBER     - Your Twilio phone number (e.g., +15551234567)
-    NOTIFY_TO_NUMBER       - Your personal phone number (e.g., +15559876543)
-    GITHUB_REPO_URL        - Your repo URL (e.g., https://github.com/sethgoodtime/Sefiathan-book)
-    ENTRY_COUNT            - Current number of entries (passed from workflow)
+Environment variables:
+    ENTRY_COUNT - Current number of entries (passed from workflow)
 """
 
 import os
 import sys
 import glob
+import urllib.request
+import json
 from pathlib import Path
-
-from twilio.rest import Client
 
 
 MILESTONES = {30, 100, 200, 300, 365}
+NTFY_TOPIC = "sefiathan-book"
 
 
 def get_stats() -> dict:
@@ -45,13 +42,14 @@ def get_stats() -> dict:
     }
 
 
-def get_latest_entry() -> str:
-    """Read the most recent chapter entry."""
+def get_latest_entry() -> tuple[str, str]:
+    """Read the most recent chapter entry. Returns (date, content)."""
     chapter_files = sorted(glob.glob("chapters/*.md"))
     if not chapter_files:
-        return ""
+        return ("", "")
+    date = Path(chapter_files[-1]).stem
     with open(chapter_files[-1], "r") as f:
-        return f.read().strip()
+        return (date, f.read().strip())
 
 
 def compile_book() -> str:
@@ -90,37 +88,19 @@ def compile_book() -> str:
     return output_path
 
 
-def send_text(message: str):
-    """Send a text message via Twilio."""
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_FROM_NUMBER")
-    to_number = os.environ.get("NOTIFY_TO_NUMBER")
+def send_ntfy(title: str, message: str, tags: str = "star"):
+    """Send a push notification via ntfy.sh."""
+    url = f"https://ntfy.sh/{NTFY_TOPIC}"
+    data = json.dumps({
+        "topic": NTFY_TOPIC,
+        "title": title,
+        "message": message,
+        "tags": [tags],
+    }).encode("utf-8")
 
-    missing = []
-    if not account_sid:
-        missing.append("TWILIO_ACCOUNT_SID")
-    if not auth_token:
-        missing.append("TWILIO_AUTH_TOKEN")
-    if not from_number:
-        missing.append("TWILIO_FROM_NUMBER")
-    if not to_number:
-        missing.append("NOTIFY_TO_NUMBER")
-
-    if missing:
-        print(f"ERROR: Missing environment variables: {', '.join(missing)}")
-        print("Set these in your GitHub Secrets or .env file.")
-        sys.exit(1)
-
-    client = Client(account_sid, auth_token)
-
-    msg = client.messages.create(
-        body=message,
-        from_=from_number,
-        to=to_number,
-    )
-
-    print(f"Text sent! SID: {msg.sid}")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req)
+    print(f"ntfy notification sent to topic: {NTFY_TOPIC}")
 
 
 def main():
@@ -128,36 +108,23 @@ def main():
     compile_book()
     stats = get_stats()
     entry_count = stats["total_entries"]
+    date, latest_entry = get_latest_entry()
 
-    # Get today's entry to include in the text
-    latest_entry = get_latest_entry()
-
-    # Truncate if too long for SMS (1600 char limit, leave room for header)
-    max_entry_len = 1200
-    if len(latest_entry) > max_entry_len:
-        latest_entry = latest_entry[:max_entry_len] + "..."
-
-    # Build the message
+    # Build the notification
     if entry_count >= 365:
-        message = (
-            f"YOUR BOOK IS DONE.\n\n"
-            f"365 days. ~{stats['total_words']:,} words.\n"
-            f"A Year in the Stars is complete.\n\n"
-            f"{latest_entry}"
-        )
+        title = "YOUR BOOK IS DONE"
+        message = f"365 days. ~{stats['total_words']:,} words. A Year in the Stars is complete."
+        tags = "tada"
     elif entry_count in MILESTONES:
-        message = (
-            f"MILESTONE: Day {entry_count} of 365!\n\n"
-            f"{latest_entry}\n\n"
-            f"~{stats['total_words']:,} words so far."
-        )
+        title = f"MILESTONE: Day {entry_count} of 365!"
+        message = f"~{stats['total_words']:,} words so far. Entry ready."
+        tags = "trophy"
     else:
-        message = (
-            f"Day {entry_count} of 365\n\n"
-            f"{latest_entry}"
-        )
+        title = f"Day {entry_count} of 365"
+        message = f"New Sefiathan entry ready for {date}."
+        tags = "star"
 
-    send_text(message)
+    send_ntfy(title, message, tags)
 
 
 if __name__ == "__main__":

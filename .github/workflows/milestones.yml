@@ -7,7 +7,7 @@ on:
     types:
       - completed
 
-  # Allow manual trigger for testing
+  # Manual trigger for testing
   workflow_dispatch:
 
 jobs:
@@ -23,9 +23,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install twilio
-
       - name: Count entries
         id: count
         run: |
@@ -33,13 +30,8 @@ jobs:
           echo "entry_count=$COUNT" >> $GITHUB_OUTPUT
           echo "Current entries: $COUNT"
 
-      - name: Send daily notification
+      - name: Send ntfy notification
         env:
-          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
-          NOTIFY_TO_NUMBER: ${{ secrets.NOTIFY_TO_NUMBER }}
-          GITHUB_REPO_URL: https://github.com/${{ github.repository }}
           ENTRY_COUNT: ${{ steps.count.outputs.entry_count }}
         run: python scripts/notify_and_compile.py
 

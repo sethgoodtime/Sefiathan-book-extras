@@ -1,27 +1,27 @@
 """
-Compile the book and send a text message with the link via Twilio.
+Compile the book and send a daily text with today's entry via Twilio.
 
 Usage:
     python scripts/notify_and_compile.py
-
-    # Send a monthly preview instead of the final book
-    python scripts/notify_and_compile.py --preview
 
 Environment variables required:
     TWILIO_ACCOUNT_SID    - Your Twilio account SID
     TWILIO_AUTH_TOKEN      - Your Twilio auth token
     TWILIO_FROM_NUMBER     - Your Twilio phone number (e.g., +15551234567)
     NOTIFY_TO_NUMBER       - Your personal phone number (e.g., +15559876543)
-    GITHUB_REPO_URL        - Your repo URL (e.g., https://github.com/you/Sefiathan-book)
+    GITHUB_REPO_URL        - Your repo URL (e.g., https://github.com/sethgoodtime/Sefiathan-book)
+    ENTRY_COUNT            - Current number of entries (passed from workflow)
 """
 
 import os
 import sys
 import glob
-from datetime import datetime
 from pathlib import Path
 
 from twilio.rest import Client
+
+
+MILESTONES = {30, 100, 200, 300, 365}
 
 
 def get_stats() -> dict:
@@ -43,6 +43,15 @@ def get_stats() -> dict:
         "first_date": first_date,
         "last_date": last_date,
     }
+
+
+def get_latest_entry() -> str:
+    """Read the most recent chapter entry."""
+    chapter_files = sorted(glob.glob("chapters/*.md"))
+    if not chapter_files:
+        return ""
+    with open(chapter_files[-1], "r") as f:
+        return f.read().strip()
 
 
 def compile_book() -> str:
@@ -88,7 +97,6 @@ def send_text(message: str):
     from_number = os.environ.get("TWILIO_FROM_NUMBER")
     to_number = os.environ.get("NOTIFY_TO_NUMBER")
 
-    # Check all required vars
     missing = []
     if not account_sid:
         missing.append("TWILIO_ACCOUNT_SID")
@@ -116,39 +124,37 @@ def send_text(message: str):
 
 
 def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Compile book and send notification")
-    parser.add_argument("--preview", action="store_true", help="Send a monthly preview instead of final")
-    args = parser.parse_args()
-
     # Compile the book
     compile_book()
     stats = get_stats()
+    entry_count = stats["total_entries"]
 
-    # Build the manuscript URL
-    repo_url = os.environ.get("GITHUB_REPO_URL", "https://github.com/sethgoodtime/Sefiathan-book")
-    manuscript_url = f"{repo_url}/blob/main/manuscript.md"
+    # Get today's entry to include in the text
+    latest_entry = get_latest_entry()
 
-    if args.preview:
-        message = (
-            f"Sefiathan Book Update\n\n"
-            f"{stats['total_entries']} days down, {365 - stats['total_entries']} to go.\n"
-            f"~{stats['total_words']:,} words so far.\n\n"
-            f"Read it: {manuscript_url}"
-        )
-    elif stats["total_entries"] >= 365:
+    # Truncate if too long for SMS (1600 char limit, leave room for header)
+    max_entry_len = 1200
+    if len(latest_entry) > max_entry_len:
+        latest_entry = latest_entry[:max_entry_len] + "..."
+
+    # Build the message
+    if entry_count >= 365:
         message = (
             f"YOUR BOOK IS DONE.\n\n"
             f"365 days. ~{stats['total_words']:,} words.\n"
             f"A Year in the Stars is complete.\n\n"
-            f"Read it: {manuscript_url}"
+            f"{latest_entry}"
+        )
+    elif entry_count in MILESTONES:
+        message = (
+            f"MILESTONE: Day {entry_count} of 365!\n\n"
+            f"{latest_entry}\n\n"
+            f"~{stats['total_words']:,} words so far."
         )
     else:
         message = (
-            f"Book compiled: {stats['total_entries']} entries, "
-            f"~{stats['total_words']:,} words.\n\n"
-            f"Read it: {manuscript_url}"
+            f"Day {entry_count} of 365\n\n"
+            f"{latest_entry}"
         )
 
     send_text(message)
